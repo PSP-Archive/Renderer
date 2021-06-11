@@ -2,16 +2,21 @@
 #include "raster.h"
 
 #define ID_MATRIX {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}
-#define FOV 100
+#define FOV 120
 
-float world[16] = ID_MATRIX; //ident matrix
+float mxstack[16][16] = {ID_MATRIX};
+float *world = mxstack[0];
+int matrix = 0;
 unsigned short col = 0xffff;
-float polybuf[16][3]; //to store each poly
+float polybuf[16][5]; //to store each poly & texcoord
 int polyindex = 0;    //current index into the buffer
 int type = 0;
+unsigned short *texture;
+float texturew, textureh;
 
 void rend_reset() {
 	polyindex = 0;
+	world = mxstack[0];
 	world[0] = 1;
 	world[1] = 0;
 	world[2] = 0;
@@ -41,28 +46,74 @@ void rend_translate(float x, float y, float z) {
 	world[14] += z;
 }
 
+int rend_pushmatrix() {
+	int i;
+	if (matrix == 15)
+		return -1; //no more room!
+	for (i = 0;i < 16;i++)
+		mxstack[matrix + 1][i] = mxstack[matrix][i];
+	world = mxstack[++matrix];
+	return 0;
+}
+
+int rend_popmatrix() {
+	if (matrix == 0)
+		return -1; //base of the stack
+	world = mxstack[--matrix];
+	return 0;
+}
+
 void rend_rotate(float x, float y, float z, float angle) {
 	float matrix[16] = ID_MATRIX, tmp[16] = ID_MATRIX;
 	float vert[3] = {x, y, z};
 	int i; //goddamn, not having malloc() sucks.
 
 	matrix_rotate_around_axis(matrix, vert, angle);
-	matrix_multiplyM(tmp, matrix, world);
+	matrix_multiplyM(tmp, world, matrix);
 	for (i = 0;i < 16;i++)
 		world[i] = tmp[i];
 	return;
 }
 
-//y and z negated to match OGL
+//why clip at 1? If you clip at less than 1, the x and y can get blown
+//insanely big. Then the renderer dies.
 inline int rastx(float x, float z) {
-	if (z >= 0)
-		return 0; //will be clipped out of existence
+	if (z >= -1)
+		z = -1;
+	if (z < -100)
+		z = -100;
 	return (int)(x * FOV / -z) + 240;
 }
 inline int rasty(float y, float z) {
-	if (z >= 0)
-		return 0;
+	if (z >= -1)
+		z = -1;
+	else if (z < -100)
+		z = -100;
 	return (int)(-y * FOV / -z) + 136;
+}
+
+void rend_colour(unsigned short colour) {
+	col = colour;
+	return;
+}
+
+void rend_texture(unsigned short *tex, int w, int h) {
+	texture = tex;
+	texturew = w;
+	textureh = h - 1;
+	return;
+}
+
+inline unsigned short rend_texture_point(float tcx, float tcy) {
+	//clip coords
+	if (tcx > 1.0f)
+		tcx = 1.0f;
+	if (tcy > 1.0f)
+		tcy = 1.0f;
+	int x = (int)(texturew * tcx);
+	int y = (int)(textureh * tcy);
+	return texture[x + y * (int)texturew];
+	
 }
 
 inline void _draw(float x, float y, float z) {
@@ -74,12 +125,6 @@ void rend_point(float x, float y, float z) {
 	matrix_multiplyV(vert, world, vert);
 	_draw(vert[0], vert[1], vert[2]);
 }
-
-void rend_colour(unsigned short colour) {
-	col = colour;
-	return;
-}
-
 void rend_line (float x1, float y1, float z1, float x2, float y2, float z2) {
 
 	float vert1[3] = {x1, y1, z1}, vert2[3] = {x2, y2,z2};
@@ -99,12 +144,26 @@ void rend_vertex(float x, float y, float z) {
 	polybuf[polyindex][0] = vert[0];
 	polybuf[polyindex][1] = vert[1];
 	polybuf[polyindex][2] = vert[2];
+
 	polyindex++;
 	return;
 }
 
+void rend_vertex_tc(float x, float y, float z, float tx, float ty) {
+	float vert[3] = {x, y, z};
+	matrix_multiplyV(vert, world, vert);
 
-void _poly(int mode) {
+	polybuf[polyindex][0] = vert[0];
+	polybuf[polyindex][1] = vert[1];
+	polybuf[polyindex][2] = vert[2];
+	polybuf[polyindex][3] = tx;
+	polybuf[polyindex][4] = ty;
+
+	polyindex++;
+	return;
+}
+
+void rend_poly_line() {
 	int i;
 	if (polyindex < 2) {
 		polyindex = 0;
@@ -115,25 +174,71 @@ void _poly(int mode) {
 		rast_vertex(rastx(polybuf[i][0], polybuf[i][2]),
 				rasty(polybuf[i][1], polybuf[i][2]));
 	}
-	switch(mode) {
-		case 0:
-			rast_poly_line(col);
-			break;
-		case 1:
-			rast_poly_fill(col);
-			break;
-	}
+	rast_poly_line(col);
 	polyindex = 0;
 
 	return;
 }
 
+//backface cull
+
+int _poly_cull() {
+	float view[4] = {polybuf[0][0], polybuf[0][1], polybuf[0][2]};
+	float normal[4];
+
+	matrix_normalizeV(view);
+
+	matrix_normal(normal, polybuf[0], polybuf[1], polybuf[2]);
+	normal[3] = 0;
+	if (matrix_dotproduct(normal, view) < 0)
+		return 1;
+	return 0;
+}
+
 void rend_poly_fill() {
-	_poly(1);
+	int i;
+	if (polyindex < 3) {
+		polyindex = 0;
+		return;
+	}
+
+	if (!_poly_cull()){
+		polyindex = 0;
+		return;
+	}
+
+	for (i = 0;i < polyindex;i++) {
+		rast_coord(rastx(polybuf[i][0], polybuf[i][2]),
+				rasty(polybuf[i][1], polybuf[i][2]),
+				0,0,polybuf[i][2]);
+	}
+	rast_poly_fill(col);
+	polyindex = 0;
+
 	return;
 }
 
-void rend_poly_line() {
-	_poly(0);
+void rend_poly_textured() {
+	int i;
+	if (polyindex < 3) {
+		polyindex = 0;
+		return; //need at least a line...
+	}
+
+	if (!_poly_cull()) {
+		polyindex = 0;
+		return;
+	}
+
+	for (i = 0;i < polyindex;i++) {
+		rast_coord(rastx(polybuf[i][0], polybuf[i][2]),
+				rasty(polybuf[i][1], polybuf[i][2]),
+				polybuf[i][3],polybuf[i][4],polybuf[i][2]);
+	}
+	rast_poly_textured();
+	polyindex = 0;
+
 	return;
 }
+
+

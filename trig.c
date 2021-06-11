@@ -115,8 +115,3 @@ float tantab[] = {
 -0.176327f,-0.1583845f,-0.1405409f,-0.1227846f,-0.1051043f,-0.0874887f,-0.0699269f,-0.0524078f,-0.0349208f,-0.0174551f,
 };
 
-#define abs(val) (val ^ (val >> 31)) + ((val >> 31)&1)
-float sin(int x) {if (x < 0) x = 360 + x;return sintab[x % 360];}
-float cos(int x) {if (x < 0) x = 360 + x;return costab[x % 360];}
-float tan(int x) {if (x < 0) x = 360 + x;return tantab[x % 360];}
-

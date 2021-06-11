@@ -1,4 +1,4 @@
-#include "trig.h"
+#include "math.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,8 +36,18 @@ void matrix_multiplyS(float *m, float ce) {//ce =coefficient, S = scalar
 	return;
 }
 
+void matrix_normalizeV(float *v) {
+	float total = (v[0] * v[0]) + (v[1] * v[1]) + (v[2] * v[2]);
+	if (!total)
+		return;
+	total = sqrt(total);
+	v[0] /= total;
+	v[1] /= total;
+	v[2] /= total;
+	return;
+}
 //m1 and m2 are arrays of *4* elements
-inline float matrix_dotproduct(float *m1, float *m2) {
+inline float matrix_dotproduct(const float *m1, const float *m2) {
 	return  (m1[0] * m2[0] + 
 		m1[1] * m2[1] +
 		m1[2] * m2[2] +
@@ -46,10 +56,23 @@ inline float matrix_dotproduct(float *m1, float *m2) {
 
 //cross product between vectors
 //not really a matrix function, but close
-void matrix_crossproduct(float *out, float *v1, float *v2, float *v3) {
+void matrix_crossproduct(float *out, float *v1, float *v2) {
 	out[0] = v1[1] * v2[2] - v1[2] * v2[1];
 	out[1] = v1[2] * v2[0] - v1[0] * v2[2];
 	out[2] = v1[0] * v2[1] - v1[1] * v2[0];
+	return;
+}
+
+//calculate the normal of a triangle
+//Find the vector between v1-v3 and v2-v3
+//then cross product of that
+void matrix_normal(float *out, float *v1, float *v2, float *v3) {
+	float v13[3] = {v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2]};
+	float v23[3] = {v3[0] - v2[0], v3[1] - v2[1], v3[2] - v2[2]};
+
+	matrix_normalizeV(v13);
+	matrix_normalizeV(v23);
+	matrix_crossproduct(out, v13, v23);
 	return;
 }
 
@@ -67,7 +90,7 @@ void matrix_multiplyM(float *m3, float *m1, float *m2) {
 			tv2[0] = m1[j];
 			tv2[1] = m1[j + 4];
 			tv2[2] = m1[j + 8];
-			tv2[3] = m2[j + 12];
+			tv2[3] = m1[j + 12];
 			m3[k + j] = matrix_dotproduct(tv1, tv2);
 		}
 	}
@@ -103,16 +126,7 @@ void matrix_multiplyV(float *out, float *m, float *v) {
 	return;
 }
 /*
-void matrix_normalizeV(float *v) {
-	float total = (v[0] * v[0]) + (v[1] * v[1]) + (v[2] * v[2]);
-	if (!total)
-		return;
-	total = sqrt(total);
-	v[0] /= total;
-	v[1] /= total;
-	v[2] /= total;
-	return;
-}
+
 */
 void matrix_rotate(float *m, int axis, float angle) {
 	float psin = sin(angle), pcos = cos(angle);
